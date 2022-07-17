@@ -6,6 +6,22 @@
 
 Provides a way to pass along async functions with a trait that can support n-ary arguments. This code is inspired from the use of [trait specialization](https://geo-ant.github.io/blog/2021/rust-traits-and-variadic-functions/) in order to support variadics. 
 
+## Examples
+
+```rust
+use async_variadic::AsyncFn;
+
+async fn min() {}
+async fn test2(_s: String) -> i32 { 3 }
+async fn test3(a: i32, b: i32) -> i32 { a + b }
+
+fn assert_impl_fn<T>(_: impl AsyncFn<T>) {}
+
+assert_impl_fn(min);
+assert_impl_fn(test2);
+assert_impl_fn(test3);
+```
+
 ## actix-web handlers + use of Into/From Traits
 
 [actix-web](https://github.com/actix/actix-web/blob/master/actix-web/src/handler.rs) has an implementation of this used for handler functions that convert [FromRequest](https://docs.rs/actix-web/latest/actix_web/trait.FromRequest.html) and return any type that implements [Responder](https://docs.rs/actix-web/latest/actix_web/trait.Responder.html). This is how you can write a web application that can bind in an arbitrary number of arguments at any position and return any type of data (so long as they implement the corresponding traits).
