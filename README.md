@@ -15,11 +15,53 @@ async fn min() {}
 async fn test2(_s: String) -> i32 { 3 }
 async fn test3(a: i32, b: i32) -> i32 { a + b }
 
-fn assert_impl_fn<T>(_: impl AsyncFn<T>) {}
+fn assert_impl_fn<T, O>(_: impl AsyncFn<T, O>) {}
 
 assert_impl_fn(min);
 assert_impl_fn(test2);
 assert_impl_fn(test3);
+```
+
+Since the output is constrained on the trait, we can even add trait bounds to the input and the output like so:
+
+```rust
+struct Request {}
+struct Response {}
+struct Body {}
+
+impl From<Request> for (Request,) {
+    fn from(req: Request) -> Self {
+        (req,)
+    }
+}
+
+impl From<Request> for (Body,) {
+    fn from(_req: Request) -> Self {
+        (Body {},)
+    }
+}
+
+impl From<&'static str> for Response {
+    fn from(_s: &'static str) -> Self {
+        Response {}
+    }
+}
+
+fn assert_impl_output<T: From<Request>, O: Into<Response>>(_: impl AsyncFn<T, O>) {}
+
+#[test]
+fn test_trait_bounds() {
+    async fn with_request_resp(_req: Request) -> &'static str {
+        "hello"
+    }
+
+    async fn with_body_resp(_body: Body) -> &'static str {
+        "hello"
+    }
+
+    assert_impl_output(with_request_resp);
+    assert_impl_output(with_body_resp);
+}
 ```
 
 ## actix-web handlers + use of Into/From Traits
@@ -357,3 +399,75 @@ mod tests {
 ```
 
 The main use case here is now we can have a function like `assert_impl_fn<T>` that actually takes an async function or closure as an argument! This is especially useful for our handlers, middleware and web server implementations.
+
+## Trait Bounds
+
+In order to allow for trait bounds on the output the trait will need to be modified to use [async-trait](https://docs.rs/async-trait). This works nicely for varying the input and output.
+
+```rust
+#[async_trait]
+pub trait AsyncFn<Args, Output> {
+    async fn call(&self, args: Args) -> Output;
+}
+```
+
+With the macro now updated to require **Send** and **Sync** to support [async-trait](https://docs.rs/async-trait).
+
+```rust
+macro_rules! ary ({ $($param:ident)* } => {
+    #[async_trait::async_trait]
+    impl<Func, Fut, $($param:Send + 'static,)*> AsyncFn<($($param,)*), Fut::Output> for Func
+    where
+        Func: Send + Sync + Fn($($param),*) -> Fut,
+        Fut: Future + Send
+    {
+        #[inline]
+        #[allow(non_snake_case)]
+        async fn call(&self, ($($param,)*): ($($param,)*)) -> Fut::Output {
+            (self)($($param,)*).await
+        }
+    }
+});
+```
+
+With this change, while it does box the output of the future, I believe is a net gain to the ergonomics as now we can do this:
+
+```rust
+struct Request {}
+struct Response {}
+struct Body {}
+
+impl From<Request> for (Request,) {
+    fn from(req: Request) -> Self {
+        (req,)
+    }
+}
+
+impl From<Request> for (Body,) {
+    fn from(_req: Request) -> Self {
+        (Body {},)
+    }
+}
+
+impl From<&'static str> for Response {
+    fn from(_s: &'static str) -> Self {
+        Response {}
+    }
+}
+
+fn assert_impl_output<T: From<Request>, O: Into<Response>>(_: impl AsyncFn<T, O>) {}
+
+#[test]
+fn test_trait_bounds() {
+    async fn with_request_resp(_req: Request) -> &'static str {
+        "hello"
+    }
+
+    async fn with_body_resp(_body: Body) -> &'static str {
+        "hello"
+    }
+
+    assert_impl_output(with_request_resp);
+    assert_impl_output(with_body_resp);
+}
+```
