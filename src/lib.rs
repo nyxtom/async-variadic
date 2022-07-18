@@ -1,10 +1,9 @@
+use async_trait::async_trait;
 use std::future::Future;
 
-pub trait AsyncFn<Args> {
-    type Output;
-    type Future: Future<Output = Self::Output>;
-
-    fn call(&self, args: Args) -> Self::Future;
+#[async_trait]
+pub trait AsyncFn<Args, Output> {
+    async fn call(&self, args: Args) -> Output;
 }
 
 /// Generates a [`AsyncFn`] trait impl for N-ary functions where N is specified with a
@@ -16,18 +15,16 @@ pub trait AsyncFn<Args> {
 /// ary! { A B C } // implements Handler for types: fn(A, B, C) -> R
 /// ```
 macro_rules! ary ({ $($param:ident)* } => {
-    impl<Func, Fut, $($param,)*> AsyncFn<($($param,)*)> for Func
+    #[async_trait::async_trait]
+    impl<Func, Fut, $($param:Send + 'static,)*> AsyncFn<($($param,)*), Fut::Output> for Func
     where
-        Func: Fn($($param),*) -> Fut,
-        Fut: Future
+        Func: Send + Sync + Fn($($param),*) -> Fut,
+        Fut: Future + Send
     {
-        type Output = Fut::Output;
-        type Future = Fut;
-
         #[inline]
         #[allow(non_snake_case)]
-        fn call(&self, ($($param,)*): ($($param,)*)) -> Self::Future {
-            (self)($($param,)*)
+        async fn call(&self, ($($param,)*): ($($param,)*)) -> Fut::Output {
+            (self)($($param,)*).await
         }
     }
 });
@@ -50,7 +47,36 @@ ary! { A B C D E F G H I J K L }
 mod tests {
     use super::*;
 
-    fn assert_impl_fn<T>(_: impl AsyncFn<T>) {}
+    struct Request {}
+    struct Response {}
+
+    struct Body {}
+
+    impl From<Request> for (Request,) {
+        fn from(req: Request) -> Self {
+            (req,)
+        }
+    }
+
+    impl From<Request> for (Body,) {
+        fn from(req: Request) -> Self {
+            (Body {},)
+        }
+    }
+
+    impl From<&'static str> for Response {
+        fn from(s: &'static str) -> Self {
+            Response {}
+        }
+    }
+
+    fn assert_impl_fn<T, O>(_: impl AsyncFn<T, O>) {}
+
+    fn assert_impl_output<T, O: Into<Response>>(_: impl AsyncFn<T, O>)
+    where
+        T: From<Request>,
+    {
+    }
 
     #[test]
     fn test_args() {
@@ -61,6 +87,22 @@ mod tests {
         async fn with_req(_req: String) -> &'static str {
             "foo"
         }
+        async fn with_refs(_r: &str, _b: &[u8]) -> &'static str {
+            "asdf"
+        }
+        struct Test {
+            a: bool,
+            b: u8,
+        }
+
+        impl Test {
+            async fn bleh(&self) -> &u8 {
+                &self.b
+            }
+        }
+
+        let t = Test { a: true, b: 8 };
+
         #[rustfmt::skip]
         #[allow(clippy::too_many_arguments, clippy::just_underscores_and_digits)]
         async fn max(
@@ -72,5 +114,18 @@ mod tests {
         assert_impl_fn(with_req);
         assert_impl_fn(min_output);
         assert_impl_fn(max);
+        assert_impl_fn(with_refs);
+        assert_impl_fn(Test::bleh);
+
+        async fn with_request_resp(req: Request) -> &'static str {
+            "hello"
+        }
+
+        async fn with_body_resp(body: Body) -> &'static str {
+            "hello"
+        }
+
+        assert_impl_output(with_request_resp);
+        assert_impl_output(with_body_resp);
     }
 }
