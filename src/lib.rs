@@ -49,7 +49,6 @@ mod tests {
 
     struct Request {}
     struct Response {}
-
     struct Body {}
 
     impl From<Request> for (Request,) {
@@ -59,24 +58,34 @@ mod tests {
     }
 
     impl From<Request> for (Body,) {
-        fn from(req: Request) -> Self {
+        fn from(_req: Request) -> Self {
             (Body {},)
         }
     }
 
     impl From<&'static str> for Response {
-        fn from(s: &'static str) -> Self {
+        fn from(_s: &'static str) -> Self {
             Response {}
         }
     }
 
-    fn assert_impl_fn<T, O>(_: impl AsyncFn<T, O>) {}
+    fn assert_impl_output<T: From<Request>, O: Into<Response>>(_: impl AsyncFn<T, O>) {}
 
-    fn assert_impl_output<T, O: Into<Response>>(_: impl AsyncFn<T, O>)
-    where
-        T: From<Request>,
-    {
+    #[test]
+    fn test_trait_bounds() {
+        async fn with_request_resp(_req: Request) -> &'static str {
+            "hello"
+        }
+
+        async fn with_body_resp(_body: Body) -> &'static str {
+            "hello"
+        }
+
+        assert_impl_output(with_request_resp);
+        assert_impl_output(with_body_resp);
     }
+
+    fn assert_impl_fn<T, O>(_: impl AsyncFn<T, O>) {}
 
     #[test]
     fn test_args() {
@@ -91,7 +100,7 @@ mod tests {
             "asdf"
         }
         struct Test {
-            a: bool,
+            _a: bool,
             b: u8,
         }
 
@@ -100,8 +109,6 @@ mod tests {
                 &self.b
             }
         }
-
-        let t = Test { a: true, b: 8 };
 
         #[rustfmt::skip]
         #[allow(clippy::too_many_arguments, clippy::just_underscores_and_digits)]
@@ -116,16 +123,5 @@ mod tests {
         assert_impl_fn(max);
         assert_impl_fn(with_refs);
         assert_impl_fn(Test::bleh);
-
-        async fn with_request_resp(req: Request) -> &'static str {
-            "hello"
-        }
-
-        async fn with_body_resp(body: Body) -> &'static str {
-            "hello"
-        }
-
-        assert_impl_output(with_request_resp);
-        assert_impl_output(with_body_resp);
     }
 }
